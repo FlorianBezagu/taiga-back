@@ -6,9 +6,9 @@ from unittest import mock
 from django.core.urlresolvers import reverse
 from django.core import mail
 
-from taiga.github_hook.api import GitHubViewSet
-from taiga.github_hook import event_hooks
-from taiga.github_hook.exceptions import ActionSyntaxException
+from taiga.hooks.gitlab import event_hooks
+from taiga.hooks.gitlab.api import GitLabViewSet
+from taiga.hooks.gitlab.exceptions import ActionSyntaxException
 from taiga.projects.issues.models import Issue
 from taiga.projects.tasks.models import Task
 from taiga.projects.userstories.models import UserStory
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.django_db
 
 def test_bad_signature(client):
     project=f.ProjectFactory()
-    url = reverse("github-hook-list")
+    url = reverse("gitlab-list")
     url = "%s?project=%s"%(url, project.id)
     data = {}
     response = client.post(url, json.dumps(data),
@@ -38,12 +38,12 @@ def test_bad_signature(client):
 def test_ok_signature(client):
     project=f.ProjectFactory()
     f.ProjectModulesConfigFactory(project=project, config={
-        "github": {
+        "gitlab": {
             "secret": "tpnIwJDz4e"
         }
     })
 
-    url = reverse("github-hook-list")
+    url = reverse("gitlab-list")
     url = "%s?project=%s"%(url, project.id)
     data = {"test:": "data"}
     response = client.post(url, json.dumps(data),
@@ -55,13 +55,13 @@ def test_ok_signature(client):
 
 def test_push_event_detected(client):
     project=f.ProjectFactory()
-    url = reverse("github-hook-list")
+    url = reverse("gitlab-list")
     url = "%s?project=%s"%(url, project.id)
     data = {"commits": [
       {"message": "test message"},
     ]}
 
-    GitHubViewSet._validate_signature = mock.Mock(return_value=True)
+    GitLabViewSet._validate_signature = mock.Mock(return_value=True)
 
     with mock.patch.object(event_hooks.PushEventHook, "process_event") as process_event_mock:
         response = client.post(url, json.dumps(data),
@@ -219,7 +219,7 @@ def test_issues_event_opened_issue(client):
         "issue": {
             "title": "test-title",
             "body": "test-body",
-            "html_url": "http://github.com/test/project/issues/11",
+            "html_url": "http://gitlab.com/test/project/issues/11",
         },
         "assignee": {},
         "label": {},
@@ -249,7 +249,7 @@ def test_issues_event_other_than_opened_issue(client):
         "issue": {
             "title": "test-title",
             "body": "test-body",
-            "html_url": "http://github.com/test/project/issues/11",
+            "html_url": "http://gitlab.com/test/project/issues/11",
         },
         "assignee": {},
         "label": {},
@@ -291,17 +291,17 @@ def test_issues_event_bad_issue(client):
 
 
 def test_issue_comment_event_on_existing_issue_task_and_us(client):
-    issue = f.IssueFactory.create(external_reference=["github", "http://github.com/test/project/issues/11"])
+    issue = f.IssueFactory.create(external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
     take_snapshot(issue, user=issue.owner)
-    task = f.TaskFactory.create(project=issue.project, external_reference=["github", "http://github.com/test/project/issues/11"])
+    task = f.TaskFactory.create(project=issue.project, external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
     take_snapshot(task, user=task.owner)
-    us = f.UserStoryFactory.create(project=issue.project, external_reference=["github", "http://github.com/test/project/issues/11"])
+    us = f.UserStoryFactory.create(project=issue.project, external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
     take_snapshot(us, user=us.owner)
 
     payload = {
         "action": "created",
         "issue": {
-            "html_url": "http://github.com/test/project/issues/11",
+            "html_url": "http://gitlab.com/test/project/issues/11",
         },
         "comment": {
             "body": "Test body",
@@ -322,31 +322,31 @@ def test_issue_comment_event_on_existing_issue_task_and_us(client):
 
     issue_history = get_history_queryset_by_model_instance(issue)
     assert issue_history.count() == 1
-    assert issue_history[0].comment == "From GitHub:\n\nTest body"
+    assert issue_history[0].comment == "From GitLab:\n\nTest body"
 
     task_history = get_history_queryset_by_model_instance(task)
     assert task_history.count() == 1
-    assert task_history[0].comment == "From GitHub:\n\nTest body"
+    assert task_history[0].comment == "From GitLab:\n\nTest body"
 
     us_history = get_history_queryset_by_model_instance(us)
     assert us_history.count() == 1
-    assert us_history[0].comment == "From GitHub:\n\nTest body"
+    assert us_history[0].comment == "From GitLab:\n\nTest body"
 
     assert len(mail.outbox) == 3
 
 
 def test_issue_comment_event_on_not_existing_issue_task_and_us(client):
-    issue = f.IssueFactory.create(external_reference=["github", "10"])
+    issue = f.IssueFactory.create(external_reference=["gitlab", "10"])
     take_snapshot(issue, user=issue.owner)
-    task = f.TaskFactory.create(project=issue.project, external_reference=["github", "10"])
+    task = f.TaskFactory.create(project=issue.project, external_reference=["gitlab", "10"])
     take_snapshot(task, user=task.owner)
-    us = f.UserStoryFactory.create(project=issue.project, external_reference=["github", "10"])
+    us = f.UserStoryFactory.create(project=issue.project, external_reference=["gitlab", "10"])
     take_snapshot(us, user=us.owner)
 
     payload = {
         "action": "created",
         "issue": {
-            "html_url": "http://github.com/test/project/issues/11",
+            "html_url": "http://gitlab.com/test/project/issues/11",
         },
         "comment": {
             "body": "Test body",
@@ -373,7 +373,7 @@ def test_issue_comment_event_on_not_existing_issue_task_and_us(client):
 
 
 def test_issues_event_bad_comment(client):
-    issue = f.IssueFactory.create(external_reference=["github", "10"])
+    issue = f.IssueFactory.create(external_reference=["gitlab", "10"])
     take_snapshot(issue, user=issue.owner)
 
     payload = {
@@ -406,9 +406,9 @@ def test_api_get_project_modules(client):
     response = client.get(url)
     assert response.status_code == 200
     content = json.loads(response.content.decode("utf-8"))
-    assert "github" in content
-    assert content["github"]["secret"] != ""
-    assert content["github"]["webhooks_url"] != ""
+    assert "gitlab" in content
+    assert content["gitlab"]["secret"] != ""
+    assert content["gitlab"]["webhooks_url"] != ""
 
 
 def test_api_patch_project_modules(client):
@@ -418,7 +418,7 @@ def test_api_patch_project_modules(client):
 
     client.login(project.owner)
     data = {
-        "github": {
+        "gitlab": {
             "secret": "test_secret",
             "url": "test_url",
         }
@@ -427,13 +427,13 @@ def test_api_patch_project_modules(client):
     assert response.status_code == 204
 
     config = services.get_modules_config(project).config
-    assert "github" in config
-    assert config["github"]["secret"] == "test_secret"
-    assert config["github"]["webhooks_url"] != "test_url"
+    assert "gitlab" in config
+    assert config["gitlab"]["secret"] == "test_secret"
+    assert config["gitlab"]["webhooks_url"] != "test_url"
 
-def test_replace_github_references():
-    assert event_hooks.replace_github_references("project-url", "#2") == "[GitHub#2](project-url/issues/2)"
-    assert event_hooks.replace_github_references("project-url", "#2 ") == "[GitHub#2](project-url/issues/2) "
-    assert event_hooks.replace_github_references("project-url", " #2 ") == " [GitHub#2](project-url/issues/2) "
-    assert event_hooks.replace_github_references("project-url", " #2") == " [GitHub#2](project-url/issues/2)"
-    assert event_hooks.replace_github_references("project-url", "#test") == "#test"
+def test_replace_gitlab_references():
+    assert event_hooks.replace_gitlab_references("project-url", "#2") == "[GitLab#2](project-url/issues/2)"
+    assert event_hooks.replace_gitlab_references("project-url", "#2 ") == "[GitLab#2](project-url/issues/2) "
+    assert event_hooks.replace_gitlab_references("project-url", " #2 ") == " [GitLab#2](project-url/issues/2) "
+    assert event_hooks.replace_gitlab_references("project-url", " #2") == " [GitLab#2](project-url/issues/2)"
+    assert event_hooks.replace_gitlab_references("project-url", "#test") == "#test"
