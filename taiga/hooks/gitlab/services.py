@@ -39,9 +39,9 @@ def get_or_generate_config(project):
 def get_gitlab_user(user_email):
     user = None
 
-    if user_id:
+    if user_email:
         try:
-            user = User.objects.get(user_email)
+            user = User.objects.get(email=user_email)
         except User.DoesNotExist:
             pass
 

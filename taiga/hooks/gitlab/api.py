@@ -38,17 +38,13 @@ class GitLabViewSet(GenericViewSet):
     # with their reponsible classes (extending event_hooks.BaseEventHook)
     event_hook_classes = {
         "push": event_hooks.PushEventHook,
-        "issues": event_hooks.IssuesEventHook,
-        "issue_comment": event_hooks.IssueCommentEventHook,
+        "issue": event_hooks.IssuesEventHook,
     }
 
     def _validate_signature(self, project, request):
-        x_hub_signature = request.META.get("HTTP_X_HUB_SIGNATURE", None)
-        if not x_hub_signature:
-            return False
+        secret_key = request.GET.get("key", None)
 
-        sha_name, signature = x_hub_signature.split('=')
-        if sha_name != 'sha1':
+        if secret_key is None:
             return False
 
         if not hasattr(project, "modules_config"):
@@ -57,9 +53,11 @@ class GitLabViewSet(GenericViewSet):
         if project.modules_config.config is None:
             return False
 
-        secret = bytes(project.modules_config.config.get("gitlab", {}).get("secret", "").encode("utf-8"))
-        mac = hmac.new(secret, msg=request.body,digestmod=hashlib.sha1)
-        return hmac.compare_digest(mac.hexdigest(), signature)
+        project_secret = project.modules_config.config.get("gitlab", {}).get("secret", "")
+        if not project_secret:
+            return False
+
+        return project_secret == secret_key
 
     def _get_project(self, request):
         project_id = request.GET.get("project", None)
@@ -69,18 +67,24 @@ class GitLabViewSet(GenericViewSet):
         except Project.DoesNotExist:
             return None
 
+    def _get_event_name(self, request):
+        payload = json.loads(request.body.decode("utf-8"))
+        return payload.get('object_kind', 'push')
+
     def create(self, request, *args, **kwargs):
         project = self._get_project(request)
         if not project:
             raise exc.BadRequest(_("The project doesn't exist"))
 
-        if not self._validate_signature(project, request):
-            raise exc.BadRequest(_("Bad signature"))
-
         try:
             payload = json.loads(request.body.decode("utf-8"))
         except ValueError:
             raise exc.BadRequest(_("The payload is not a valid json"))
+
+        event_name = self._get_event_name(request)
+
+        if not self._validate_signature(project, request):
+            raise exc.BadRequest(_("Bad signature"))
 
         event_hook_class = self.event_hook_classes.get(event_name, None)
         if event_hook_class is not None:

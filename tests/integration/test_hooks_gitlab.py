@@ -21,15 +21,21 @@ from .. import factories as f
 
 pytestmark = pytest.mark.django_db
 
+# TODO COMPROBAR QUE SI NO LE PASO KEY O TENGO LA KEY VACIA SIMPLEMENTE NO FUNCIONA
+
 
 def test_bad_signature(client):
     project=f.ProjectFactory()
-    url = reverse("gitlab-list")
-    url = "%s?project=%s"%(url, project.id)
+    f.ProjectModulesConfigFactory(project=project, config={
+        "gitlab": {
+            "secret": "tpnIwJDz4e"
+        }
+    })
+
+    url = reverse("gitlab-hook-list")
+    url = "{}?project={}&key={}".format(url, project.id, "badbadbad")
     data = {}
-    response = client.post(url, json.dumps(data),
-        HTTP_X_HUB_SIGNATURE="sha1=badbadbad",
-        content_type="application/json")
+    response = client.post(url, json.dumps(data), content_type="application/json")
     response_content = json.loads(response.content.decode("utf-8"))
     assert response.status_code == 400
     assert "Bad signature" in response_content["_error_message"]
@@ -43,19 +49,17 @@ def test_ok_signature(client):
         }
     })
 
-    url = reverse("gitlab-list")
-    url = "%s?project=%s"%(url, project.id)
+    url = reverse("gitlab-hook-list")
+    url = "{}?project={}&key={}".format(url, project.id, "tpnIwJDz4e")
     data = {"test:": "data"}
-    response = client.post(url, json.dumps(data),
-        HTTP_X_HUB_SIGNATURE="sha1=3c8e83fdaa266f81c036ea0b71e98eb5e054581a",
-        content_type="application/json")
+    response = client.post(url, json.dumps(data), content_type="application/json")
 
     assert response.status_code == 200
 
 
 def test_push_event_detected(client):
     project=f.ProjectFactory()
-    url = reverse("gitlab-list")
+    url = reverse("gitlab-hook-list")
     url = "%s?project=%s"%(url, project.id)
     data = {"commits": [
       {"message": "test message"},
