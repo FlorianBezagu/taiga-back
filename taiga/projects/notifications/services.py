@@ -32,6 +32,7 @@ from taiga.projects.history.choices import HistoryType
 from taiga.projects.history.services import (make_key_from_model_object,
                                              get_last_snapshot_for_key,
                                              get_model_from_key)
+from taiga.permissions.service import user_has_perm
 from taiga.users.models import User
 
 from .models import HistoryChangeNotification
@@ -121,6 +122,18 @@ def analize_object_for_watchers(obj:object, history:object):
             obj.watchers.add(user)
 
 
+def _filter_by_permissions(obj, user):
+    if obj.__class__._meta.model_name == "userstory":
+        return user_has_perm(user, "view_us", obj)
+    if obj.__class__._meta.model_name == "issue":
+        return user_has_perm(user, "view_issues", obj)
+    if obj.__class__._meta.model_name == "task":
+        return user_has_perm(user, "view_tasks", obj)
+    if obj.__class__._meta.model_name == "wikipage":
+        return user_has_perm(user, "view_wiki_pages", obj)
+    return False
+
+
 def get_users_to_notify(obj, *, discard_users=None) -> list:
     """
     Get filtered set of users to notify for specified
@@ -148,6 +161,8 @@ def get_users_to_notify(obj, *, discard_users=None) -> list:
     # Remove the changer from candidates
     if discard_users:
         candidates = candidates - set(discard_users)
+
+    candidates = filter(partial(_filter_by_permissions, obj), candidates)
 
     return frozenset(candidates)
 
