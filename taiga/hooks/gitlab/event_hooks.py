@@ -14,6 +14,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import re
+import os
+
 from django.utils.translation import ugettext_lazy as _
 
 from taiga.projects.models import Project, IssueStatus, TaskStatus, UserStoryStatus
@@ -26,8 +29,6 @@ from taiga.projects.notifications.services import send_notifications
 
 from .exceptions import ActionSyntaxException
 from .services import get_gitlab_user
-
-import re
 
 
 class BaseEventHook:
@@ -44,12 +45,10 @@ class PushEventHook(BaseEventHook):
         if self.payload is None:
             return
 
-        gitlab_user = self.payload.get('sender', {}).get('id', None)
-
         commits = self.payload.get("commits", [])
         for commit in commits:
             message = commit.get("message", None)
-            self._process_message(message, gitlab_user)
+            self._process_message(message, None)
 
     def _process_message(self, message, gitlab_user):
         """
@@ -105,14 +104,13 @@ def replace_gitlab_references(project_url, wiki_text):
 
 class IssuesEventHook(BaseEventHook):
     def process_event(self):
-        if self.payload.get('action', None) != "opened":
+        if self.payload.get('object_attributes', {}).get("state", "") != "opened":
             return
 
-        subject = self.payload.get('issue', {}).get('title', None)
-        description = self.payload.get('issue', {}).get('body', None)
-        gitlab_reference = self.payload.get('issue', {}).get('number', None)
-        gitlab_user = self.payload.get('issue', {}).get('user', {}).get('id', None)
-        project_url = self.payload.get('repository', {}).get('html_url', None)
+        subject = self.payload.get('object_attributes', {}).get('title', None)
+        description = self.payload.get('object_attributes', {}).get('description', None)
+        gitlab_reference = self.payload.get('object_attributes', {}).get('url', None)
+        project_url = os.path.basename(os.path.basename(gitlab_reference))
 
         if not all([subject, gitlab_reference, project_url]):
             raise ActionSyntaxException(_("Invalid issue information"))
@@ -126,34 +124,9 @@ class IssuesEventHook(BaseEventHook):
             severity=self.project.default_severity,
             priority=self.project.default_priority,
             external_reference=['gitlab', gitlab_reference],
-            owner=get_gitlab_user(gitlab_user)
+            owner=get_gitlab_user(None)
         )
-        take_snapshot(issue, user=get_gitlab_user(gitlab_user))
+        take_snapshot(issue, user=get_gitlab_user(None))
 
-        snapshot = take_snapshot(issue, comment="Created from GitLab", user=get_gitlab_user(gitlab_user))
+        snapshot = take_snapshot(issue, comment="Created from GitLab", user=get_gitlab_user(None))
         send_notifications(issue, history=snapshot)
-
-
-class IssueCommentEventHook(BaseEventHook):
-    def process_event(self):
-        if self.payload.get('action', None) != "created":
-            raise ActionSyntaxException(_("Invalid issue comment information"))
-
-        gitlab_reference = self.payload.get('issue', {}).get('number', None)
-        comment_message = self.payload.get('comment', {}).get('body', None)
-        gitlab_user = self.payload.get('sender', {}).get('id', None)
-        project_url = self.payload.get('repository', {}).get('html_url', None)
-        comment_message = replace_gitlab_references(project_url, comment_message)
-
-        if not all([comment_message, gitlab_reference, project_url]):
-            raise ActionSyntaxException(_("Invalid issue comment information"))
-
-        issues = Issue.objects.filter(external_reference=["gitlab", gitlab_reference])
-        tasks = Task.objects.filter(external_reference=["gitlab", gitlab_reference])
-        uss = UserStory.objects.filter(external_reference=["gitlab", gitlab_reference])
-
-        for item in list(issues) + list(tasks) + list(uss):
-            snapshot = take_snapshot(item,
-                                     comment="From GitLab:\n\n{}".format(comment_message),
-                                     user=get_gitlab_user(gitlab_user))
-            send_notifications(item, history=snapshot)

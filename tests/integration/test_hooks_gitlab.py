@@ -219,16 +219,12 @@ def test_issues_event_opened_issue(client):
     notify_policy.save()
 
     payload = {
-        "action": "opened",
-        "issue": {
+        "object_kind": "issue",
+        "object_attributes": {
             "title": "test-title",
-            "body": "test-body",
-            "html_url": "http://gitlab.com/test/project/issues/11",
-        },
-        "assignee": {},
-        "label": {},
-        "repository": {
-            "html_url": "test",
+            "description": "test-body",
+            "url": "http://gitlab.com/test/project/issues/11",
+            "state": "opened"
         },
     }
 
@@ -240,6 +236,7 @@ def test_issues_event_opened_issue(client):
     assert Issue.objects.count() == 2
     assert len(mail.outbox) == 1
 
+
 def test_issues_event_other_than_opened_issue(client):
     issue = f.IssueFactory.create()
     issue.project.default_issue_status = issue.status
@@ -249,14 +246,13 @@ def test_issues_event_other_than_opened_issue(client):
     issue.project.save()
 
     payload = {
-        "action": "closed",
-        "issue": {
+        "object_kind": "issue",
+        "object_attributes": {
             "title": "test-title",
-            "body": "test-body",
-            "html_url": "http://gitlab.com/test/project/issues/11",
+            "description": "test-body",
+            "url": "http://gitlab.com/test/project/issues/11",
+            "state": "closed"
         },
-        "assignee": {},
-        "label": {},
     }
 
     mail.outbox = []
@@ -267,6 +263,7 @@ def test_issues_event_other_than_opened_issue(client):
     assert Issue.objects.count() == 1
     assert len(mail.outbox) == 0
 
+
 def test_issues_event_bad_issue(client):
     issue = f.IssueFactory.create()
     issue.project.default_issue_status = issue.status
@@ -276,10 +273,8 @@ def test_issues_event_bad_issue(client):
     issue.project.save()
 
     payload = {
-        "action": "opened",
-        "issue": {},
-        "assignee": {},
-        "label": {},
+        "object_kind": "issue",
+        "object_attributes": {},
     }
     mail.outbox = []
 
@@ -293,112 +288,6 @@ def test_issues_event_bad_issue(client):
     assert Issue.objects.count() == 1
     assert len(mail.outbox) == 0
 
-
-def test_issue_comment_event_on_existing_issue_task_and_us(client):
-    issue = f.IssueFactory.create(external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
-    take_snapshot(issue, user=issue.owner)
-    task = f.TaskFactory.create(project=issue.project, external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
-    take_snapshot(task, user=task.owner)
-    us = f.UserStoryFactory.create(project=issue.project, external_reference=["gitlab", "http://gitlab.com/test/project/issues/11"])
-    take_snapshot(us, user=us.owner)
-
-    payload = {
-        "action": "created",
-        "issue": {
-            "html_url": "http://gitlab.com/test/project/issues/11",
-        },
-        "comment": {
-            "body": "Test body",
-        },
-        "repository": {
-            "html_url": "test",
-        },
-    }
-
-    mail.outbox = []
-
-    assert get_history_queryset_by_model_instance(issue).count() == 0
-    assert get_history_queryset_by_model_instance(task).count() == 0
-    assert get_history_queryset_by_model_instance(us).count() == 0
-
-    ev_hook = event_hooks.IssueCommentEventHook(issue.project, payload)
-    ev_hook.process_event()
-
-    issue_history = get_history_queryset_by_model_instance(issue)
-    assert issue_history.count() == 1
-    assert issue_history[0].comment == "From GitLab:\n\nTest body"
-
-    task_history = get_history_queryset_by_model_instance(task)
-    assert task_history.count() == 1
-    assert task_history[0].comment == "From GitLab:\n\nTest body"
-
-    us_history = get_history_queryset_by_model_instance(us)
-    assert us_history.count() == 1
-    assert us_history[0].comment == "From GitLab:\n\nTest body"
-
-    assert len(mail.outbox) == 3
-
-
-def test_issue_comment_event_on_not_existing_issue_task_and_us(client):
-    issue = f.IssueFactory.create(external_reference=["gitlab", "10"])
-    take_snapshot(issue, user=issue.owner)
-    task = f.TaskFactory.create(project=issue.project, external_reference=["gitlab", "10"])
-    take_snapshot(task, user=task.owner)
-    us = f.UserStoryFactory.create(project=issue.project, external_reference=["gitlab", "10"])
-    take_snapshot(us, user=us.owner)
-
-    payload = {
-        "action": "created",
-        "issue": {
-            "html_url": "http://gitlab.com/test/project/issues/11",
-        },
-        "comment": {
-            "body": "Test body",
-        },
-        "repository": {
-            "html_url": "test",
-        },
-    }
-
-    mail.outbox = []
-
-    assert get_history_queryset_by_model_instance(issue).count() == 0
-    assert get_history_queryset_by_model_instance(task).count() == 0
-    assert get_history_queryset_by_model_instance(us).count() == 0
-
-    ev_hook = event_hooks.IssueCommentEventHook(issue.project, payload)
-    ev_hook.process_event()
-
-    assert get_history_queryset_by_model_instance(issue).count() == 0
-    assert get_history_queryset_by_model_instance(task).count() == 0
-    assert get_history_queryset_by_model_instance(us).count() == 0
-
-    assert len(mail.outbox) == 0
-
-
-def test_issues_event_bad_comment(client):
-    issue = f.IssueFactory.create(external_reference=["gitlab", "10"])
-    take_snapshot(issue, user=issue.owner)
-
-    payload = {
-        "action": "other",
-        "issue": {},
-        "comment": {},
-        "repository": {
-            "html_url": "test",
-        },
-    }
-    ev_hook = event_hooks.IssueCommentEventHook(issue.project, payload)
-
-    mail.outbox = []
-
-    with pytest.raises(ActionSyntaxException) as excinfo:
-        ev_hook.process_event()
-
-    assert str(excinfo.value) == "Invalid issue comment information"
-
-    assert Issue.objects.count() == 1
-    assert len(mail.outbox) == 0
 
 
 def test_api_get_project_modules(client):
